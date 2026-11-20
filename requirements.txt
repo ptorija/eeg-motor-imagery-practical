@@ -1,0 +1,9 @@
+numpy
+scipy
+scikit-learn
+pandas
+matplotlib
+mne>=1.6
+tensorflow>=2.16
+keras-tuner
+jupyterlab
