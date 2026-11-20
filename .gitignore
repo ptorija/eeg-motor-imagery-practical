@@ -1,0 +1,4 @@
+__pycache__/
+*.npz
+tuning/
+precomputed/*.tmp
