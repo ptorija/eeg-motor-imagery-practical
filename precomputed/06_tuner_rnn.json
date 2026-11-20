@@ -1,0 +1,50 @@
+[
+ {
+  "rnn_type": "LSTM",
+  "units": 32,
+  "bidirectional": "no",
+  "summary": "average",
+  "learning_rate": 0.001,
+  "val_accuracy": 0.6325926184654236
+ },
+ {
+  "rnn_type": "GRU",
+  "units": 64,
+  "bidirectional": "yes",
+  "summary": "average",
+  "learning_rate": 0.01,
+  "val_accuracy": 0.614814817905426
+ },
+ {
+  "rnn_type": "GRU",
+  "units": 32,
+  "bidirectional": "no",
+  "summary": "average",
+  "learning_rate": 0.001,
+  "val_accuracy": 0.6088888645172119
+ },
+ {
+  "rnn_type": "LSTM",
+  "units": 16,
+  "bidirectional": "no",
+  "summary": "last",
+  "learning_rate": 0.001,
+  "val_accuracy": 0.5422222018241882
+ },
+ {
+  "rnn_type": "GRU",
+  "units": 32,
+  "bidirectional": "no",
+  "summary": "last",
+  "learning_rate": 0.001,
+  "val_accuracy": 0.5348148345947266
+ },
+ {
+  "rnn_type": "GRU",
+  "units": 64,
+  "bidirectional": "no",
+  "summary": "last",
+  "learning_rate": 0.001,
+  "val_accuracy": 0.5274074077606201
+ }
+]

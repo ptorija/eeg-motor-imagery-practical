@@ -142,6 +142,14 @@ def spectral_features(Xf, fs=80, fmin=6, fmax=32):
     return np.log(P[..., sel] + 1e-12).reshape(len(Xf), -1).astype(np.float32)
 
 
+def band_power_features(Xf, fs=80, bands=((8, 13), (13, 30))):
+    """Log power of each electrode in the mu (8-13 Hz) and beta (13-30 Hz) bands
+    -> 64 electrodes x 2 bands = 128 numbers per trial (the ERD of notebook 03)."""
+    f, P = psd(Xf, fs)
+    B = np.stack([P[..., (f >= lo) & (f < hi)].mean(-1) for lo, hi in bands], -1)
+    return np.log(B + 1e-12).reshape(len(Xf), -1).astype(np.float32)
+
+
 def prepare_inputs(data, low=8, high=30, tmin=1.0):
     """The session's preprocessing (notebooks 02-03) + split (notebook 04):
     band-pass low-high Hz, drop the first `tmin` seconds (eye movements!),
@@ -149,13 +157,13 @@ def prepare_inputs(data, low=8, high=30, tmin=1.0):
 
     Returns a dict with the masks train/val/test, the labels y and the inputs
     in the shape each model family expects:
-      'features'   (n, 64*n_freqs)   spectral features, for the MLP
+      'features'   (n, 128)          mu & beta power of each electrode, for the MLP
       'sequence'   (n, time, 64)     time x channels, for CNN1D / RNNs / attention
       'image'      (n, 64, time, 1)  channels x time, for EEGNet
     """
     Xf = bandpass(data["X"], low, high, data["fs"])[:, :, int(round(tmin * data["fs"])):]
     train, val, test = subject_split(data["subject"])
-    F = spectral_features(Xf, data["fs"], fmin=low, fmax=high)
+    F = band_power_features(Xf, data["fs"])
     mu, sd = F[train].mean(0), F[train].std(0) + 1e-6     # scaling learnt on TRAIN people only
     Xs = standardize_trials(Xf)
     return {"train": train, "val": val, "test": test, "y": data["y"],
@@ -164,7 +172,7 @@ def prepare_inputs(data, low=8, high=30, tmin=1.0):
             "image": Xs[..., None]}
 
 
-MODEL_INPUT = {"MLP (spectral features)": "features", "CNN1D": "sequence", "SimpleRNN": "sequence",
+MODEL_INPUT = {"MLP (band power)": "features", "CNN1D": "sequence", "SimpleRNN": "sequence",
                "LSTM": "sequence", "GRU": "sequence", "BiGRU": "sequence",
                "Attention": "sequence", "EEGNet": "image"}
 
@@ -208,12 +216,11 @@ def _front_end(x, filters=32):
 
 
 def build_mlp(n_features, units=64, dropout=0.5, lr=1e-3):
+    """One hidden layer (more layers overfit with so little data — we tried)."""
     import keras
     from keras import layers
     i = keras.Input((n_features,))
     x = layers.Dense(units, activation="relu")(i)
-    x = layers.Dropout(dropout)(x)
-    x = layers.Dense(units // 2, activation="relu")(x)
     x = layers.Dropout(dropout)(x)
     return _compile(keras.Model(i, layers.Dense(2, activation="softmax")(x), name="MLP"), lr)
 
@@ -294,7 +301,8 @@ def plot_history(history, title="", chance=0.5, ax=None):
     ax.plot(ep, h["accuracy"], "o-", ms=3, label="training")
     ax.plot(ep, h["val_accuracy"], "o-", ms=3, label="validation (new people)")
     ax.axhline(chance, color=GREY, ls="--", lw=1, label="chance")
-    ax.set(xlabel="epoch", ylabel="accuracy", ylim=(0.4, 1.0), title=title)
+    top = max(0.85, max(max(h["accuracy"]), max(h["val_accuracy"])) + 0.05)
+    ax.set(xlabel="epoch", ylabel="accuracy", ylim=(0.4, min(1.0, top)), title=title)
     ax.legend(loc="upper left")
     return ax
 
@@ -323,9 +331,10 @@ def plot_scores(names, scores, chance=0.5, title="", errors=None, ax=None, highl
     for k, s in enumerate(scores):
         ax.text(s + 0.01, k, f"{s:.2f}", va="center")
     ax.axvline(chance, color=GREY, ls="--", lw=1)
-    ax.set(xlim=(0.4, 1.0), xlabel="accuracy", title=title)
+    ax.set(xlim=(0.4, 1.0), xlabel="accuracy")
+    ax.set_title(title, pad=16)
     ax.invert_yaxis()
-    ax.text(chance, -0.55, " chance", color=GREY, va="bottom")
+    ax.text(chance, 1.01, "chance", color=GREY, ha="center", va="bottom", transform=ax.get_xaxis_transform())
     return ax
 
 
