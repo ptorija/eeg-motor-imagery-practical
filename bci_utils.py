@@ -14,9 +14,10 @@ import matplotlib.pyplot as plt
 from scipy.signal import butter, sosfiltfilt, welch
 
 REPO = "ptorija/eeg-motor-imagery-practical"
-DATA_URL = f"https://github.com/{REPO}/releases/download/v1.0/eegmmidb_MI_LR.npz"
+DATA_URL = f"https://github.com/{REPO}/releases/download/v2.0/eegmmidb_MI_LR_160Hz.npz"
 RAW_URL = f"https://raw.githubusercontent.com/{REPO}/main"
-DATA_FILE = "eegmmidb_MI_LR.npz"
+DATA_FILE = "eegmmidb_MI_LR_160Hz.npz"
+MODEL_FS = 80     # sampling rate of the network inputs (after filtering, see prepare_inputs)
 
 # One colour per class, used in every figure of the course
 COLORS = {"left": "#2E6FD8", "right": "#F28E2B"}
@@ -40,14 +41,14 @@ def load_data(path=DATA_FILE, verbose=True):
     """Download (only the first time) and load the dataset.
 
     Returns a dict with:
-      X        (n_trials, 64 channels, 320 samples)  EEG in microvolts
+      X        (n_trials, 64 channels, 640 samples)  EEG in microvolts
       y        (n_trials,)  0 = imagined LEFT hand, 1 = imagined RIGHT hand
       subject  (n_trials,)  subject id (1..109)
-      ch_names, ch_pos, fs (=80 Hz)
+      ch_names, ch_pos, fs (=160 Hz, as recorded)
     """
     if not os.path.exists(path):
         if verbose:
-            print("Downloading the dataset (~180 MB, once)...")
+            print("Downloading the dataset (~215 MB, once)...")
         urllib.request.urlretrieve(DATA_URL, path)
     d = np.load(path)
     data = {
@@ -80,11 +81,17 @@ def mne_info(data):
 # ----------------------------------------------------------------------------
 # Preprocessing
 # ----------------------------------------------------------------------------
-def bandpass(X, low, high, fs=80, order=4):
+def bandpass(X, low, high, fs=160, order=4):
     """Zero-phase Butterworth band-pass filter along the time axis."""
     high = min(high, fs / 2 - 1)
     sos = butter(order, [low, high], btype="band", fs=fs, output="sos")
-    return sosfiltfilt(sos, X, axis=-1).astype(np.float32)
+    X = np.asarray(X)
+    if X.ndim < 3:
+        return sosfiltfilt(sos, X, axis=-1).astype(np.float32)
+    out = np.empty(X.shape, np.float32)
+    for k in range(0, len(X), 500):           # in chunks: keeps memory low
+        out[k:k + 500] = sosfiltfilt(sos, X[k:k + 500], axis=-1)
+    return out
 
 
 def peak_to_peak(X):
@@ -101,7 +108,7 @@ def standardize_trials(X):
     return np.clip(X, -10, 10).astype(np.float32)
 
 
-def psd(X, fs=80):
+def psd(X, fs=160):
     """Power spectral density (Welch, 1-s windows). Returns freqs, power."""
     f, P = welch(X, fs=fs, nperseg=fs, axis=-1)
     return f, P
@@ -135,14 +142,14 @@ def chance_level(y):
     return max(np.mean(y), 1 - np.mean(y))
 
 
-def spectral_features(Xf, fs=80, fmin=6, fmax=32):
+def spectral_features(Xf, fs=160, fmin=6, fmax=32):
     """Log power spectrum (1-Hz bins, fmin..fmax) of every electrode, flattened."""
     f, P = psd(Xf, fs)
     sel = (f >= fmin) & (f <= fmax)
     return np.log(P[..., sel] + 1e-12).reshape(len(Xf), -1).astype(np.float32)
 
 
-def band_power_features(Xf, fs=80, bands=((8, 13), (13, 30))):
+def band_power_features(Xf, fs=160, bands=((8, 13), (13, 30))):
     """Log power of each electrode in the mu (8-13 Hz) and beta (13-30 Hz) bands
     -> 64 electrodes x 2 bands = 128 numbers per trial (the ERD of notebook 03)."""
     f, P = psd(Xf, fs)
@@ -151,22 +158,27 @@ def band_power_features(Xf, fs=80, bands=((8, 13), (13, 30))):
 
 
 def prepare_inputs(data, low=8, high=30, tmin=1.0):
-    """The session's preprocessing (notebooks 02-03) + split (notebook 04):
+    """The session's preprocessing (parts 02-03) + split (part 04):
     band-pass low-high Hz, drop the first `tmin` seconds (eye movements!),
+    keep 1 sample out of 2 (160 -> 80 Hz: after an 8-30 Hz filter nothing is
+    left above 40 Hz, so nothing is lost and the networks train 2x faster),
     standardise each trial, split by person.
 
-    Returns a dict with the masks train/val/test, the labels y and the inputs
-    in the shape each model family expects:
+    Returns a dict with the masks train/val/test, the labels y, the sampling
+    rate fs of the inputs and the inputs in the shape each model family expects:
       'features'   (n, 128)          mu & beta power of each electrode, for the MLP
       'sequence'   (n, time, 64)     time x channels, for CNN1D / RNNs / attention
       'image'      (n, 64, time, 1)  channels x time, for EEGNet
     """
-    Xf = bandpass(data["X"], low, high, data["fs"])[:, :, int(round(tmin * data["fs"])):]
+    fs = data["fs"]
+    Xf = bandpass(data["X"], low, high, fs)[:, :, int(round(tmin * fs)):]
+    step = fs // MODEL_FS if (fs % MODEL_FS == 0 and high < MODEL_FS / 2 * 0.9) else 1
+    Xf = np.ascontiguousarray(Xf[:, :, ::step]); fs = fs // step
     train, val, test = subject_split(data["subject"])
-    F = band_power_features(Xf, data["fs"])
+    F = band_power_features(Xf, fs)
     mu, sd = F[train].mean(0), F[train].std(0) + 1e-6     # scaling learnt on TRAIN people only
-    Xs = standardize_trials(Xf)
-    return {"train": train, "val": val, "test": test, "y": data["y"],
+    Xs = standardize_trials(Xf); del Xf
+    return {"train": train, "val": val, "test": test, "y": data["y"], "fs": fs,
             "features": (F - mu) / sd,
             "sequence": np.ascontiguousarray(Xs.transpose(0, 2, 1)),
             "image": Xs[..., None]}
@@ -207,7 +219,7 @@ def _compile(model, lr=1e-3):
 
 def _front_end(x, filters=32):
     """Shared first block for the sequence models: a temporal convolution
-    that also shrinks 320 time steps to 80 (keeps training fast)."""
+    that also shrinks the time steps by 4 (240 -> 60, keeps training fast)."""
     from keras import layers
     x = layers.Conv1D(filters, 9, padding="same", activation="elu")(x)
     x = layers.BatchNormalization()(x)
@@ -352,3 +364,56 @@ def save_json(obj, path):
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w") as f:
         json.dump(obj, f, indent=1, default=lambda o: o.tolist() if hasattr(o, "tolist") else float(o))
+
+
+# ----------------------------------------------------------------------------
+# Live class poll (anonymous)
+# ----------------------------------------------------------------------------
+# Your answers in the 🤔 / 📤 cells are sent to a Google Form that the teacher
+# projects in class. Only the answer is sent, together with a random nickname
+# (e.g. "Brave Otter") so you can find yourself in the 🏆 lists. No name, no
+# email, nothing else. Set SHARE = False (setup cell) to switch it off.
+FORM_URL = ""          # filled in below once the form exists
+FORM_ENTRIES = {}
+SHARE = True
+_ADJ = ["Brave", "Calm", "Clever", "Curious", "Fast", "Gentle", "Happy", "Lucky", "Mighty", "Quiet",
+        "Sharp", "Sleepy", "Smart", "Sunny", "Swift", "Wild", "Witty", "Bold", "Cosmic", "Neon"]
+_ANIMALS = ["Otter", "Panda", "Falcon", "Koala", "Lynx", "Octopus", "Owl", "Fox", "Dolphin", "Tiger",
+            "Gecko", "Bison", "Raven", "Seal", "Wolf", "Hedgehog", "Llama", "Penguin", "Moose", "Axolotl"]
+_NICK_FILE = ".bci_nickname"
+
+
+def nickname():
+    """Your random, anonymous nickname for this session (kept in a small file)."""
+    if os.path.exists(_NICK_FILE):
+        return open(_NICK_FILE).read().strip()
+    import random
+    nick = f"{random.choice(_ADJ)} {random.choice(_ANIMALS)} {random.randint(10, 99)}"
+    with open(_NICK_FILE, "w") as f:
+        f.write(nick)
+    return nick
+
+
+def share(question, answer, leaderboard=False):
+    """Send ONE answer anonymously to the class poll. Never stops your notebook.
+    leaderboard=True prefixes your nickname (for the 🏆 result lists)."""
+    entry = FORM_ENTRIES.get(question)
+    if not (SHARE and FORM_URL and entry):
+        return
+    text = f"{nickname()}: {answer}" if leaderboard else str(answer)
+    import threading
+    import urllib.parse
+
+    def _send():
+        try:
+            body = urllib.parse.urlencode({entry: text}).encode()
+            urllib.request.urlopen(urllib.request.Request(FORM_URL, data=body), timeout=8)
+        except Exception:
+            pass
+    threading.Thread(target=_send, daemon=True).start()
+    print(f"📤 Shared anonymously with the class: {text}")
+
+
+def round5(v):
+    """Round to the nearest multiple of 5 (for the poll's answer options)."""
+    return int(5 * round(v / 5))
