@@ -373,8 +373,28 @@ def save_json(obj, path):
 # projects in class. Only the answer is sent, together with a random nickname
 # (e.g. "Brave Otter") so you can find yourself in the 🏆 lists. No name, no
 # email, nothing else. Set SHARE = False (setup cell) to switch it off.
-FORM_URL = ""          # filled in below once the form exists
-FORM_ENTRIES = {}
+FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSeiTiNUAA3UW8tyBf_me5K9rS5P44Xq_gIrYrgXhsK54NMtxQ/formResponse"
+FORM_ENTRIES = {
+    "balanced": "entry.1531767677",
+    "averages_differ": "entry.664101876",
+    "filter_low": "entry.1154510086",
+    "filter_high": "entry.1478300890",
+    "kept_prediction": "entry.1627734214",
+    "left_hand_erd": "entry.1326626962",
+    "early_difference": "entry.3625979",
+    "eyes_model": "entry.1818507556",
+    "who_is_it": "entry.167502494",
+    "csp_result": "entry.1575392739",
+    "shuffled_prediction": "entry.371854933",
+    "best_model_guess": "entry.759773430",
+    "worst_model_guess": "entry.1122786735",
+    "nn_result": "entry.2083010078",
+    "same_twice": "entry.1734055298",
+    "tuner_rnn": "entry.1646104485",
+    "tuner_eegnet": "entry.670903640",
+    "test_prediction": "entry.1893958091",
+    "final_test": "entry.1490239167",
+}
 SHARE = True
 _ADJ = ["Brave", "Calm", "Clever", "Curious", "Fast", "Gentle", "Happy", "Lucky", "Mighty", "Quiet",
         "Sharp", "Sleepy", "Smart", "Sunny", "Swift", "Wild", "Witty", "Bold", "Cosmic", "Neon"]
